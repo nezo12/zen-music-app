@@ -1,0 +1,14 @@
+{
+  "artists": [
+    {
+      "id": "artist_one",
+      "name": "Artist One",
+      "path": "Artist One"
+    },
+    {
+      "id": "artist_two",
+      "name": "Artist Two",
+      "path": "Artist Two"
+    }
+  ]
+}

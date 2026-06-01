@@ -1,0 +1,10 @@
+{
+  "album": "Singles",
+  "tracks": [
+    {
+      "title": "Another Track",
+      "file": "another_track.wav",
+      "duration": 195
+    }
+  ]
+}

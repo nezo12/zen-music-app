@@ -1,0 +1,18 @@
+{
+  "album": "Singles",
+  "image": "artist.jpg",
+  "tracks": [
+    {
+      "title": "First Song",
+      "file": "first_song.wav",
+      "cover": "first_song.jpg",
+      "duration": 180
+    },
+    {
+      "title": "Second Song",
+      "file": "second_song.wav",
+      "cover": "second_song.jpg",
+      "duration": 210
+    }
+  ]
+}
