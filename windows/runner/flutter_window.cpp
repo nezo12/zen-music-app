@@ -139,6 +139,11 @@ void RegisterAudioChannel(flutter::FlutterEngine* engine) {
           return;
         }
 
+        if (method == "updateNowPlaying") {
+          result->Success();
+          return;
+        }
+
         result->NotImplemented();
       });
 }
