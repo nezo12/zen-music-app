@@ -340,6 +340,14 @@ class SessionStore {
 class NativeAudioPlayer {
   static const MethodChannel _channel = MethodChannel('zen_music/audio');
 
+  void setCommandHandler(Future<void> Function(String command) handler) {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'mediaCommand') {
+        await handler(call.arguments?.toString() ?? '');
+      }
+    });
+  }
+
   Future<void> playFile(String filePath) async {
     await _channel.invokeMethod<void>('playFile', {'path': filePath});
   }
@@ -361,6 +369,24 @@ class NativeAudioPlayer {
 
   Future<void> stop() async {
     await _channel.invokeMethod<void>('stop');
+  }
+
+  Future<void> updateNowPlaying({
+    required String title,
+    required String artist,
+    required String album,
+    required Duration duration,
+    required Duration position,
+    required bool playing,
+  }) async {
+    await _channel.invokeMethod<void>('updateNowPlaying', {
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'duration': duration.inSeconds,
+      'position': position.inSeconds,
+      'playing': playing,
+    });
   }
 }
 
@@ -423,12 +449,42 @@ class MusicController extends ChangeNotifier {
   }
 
   Future<void> init() async {
+    _player.setCommandHandler(handleMediaCommand);
     await restoreSession();
     if (authenticated) {
       await refresh();
     } else {
       loading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> handleMediaCommand(String command) async {
+    switch (command) {
+      case 'toggle':
+        if (currentTrack != null && !downloading) {
+          await togglePlay();
+        }
+        break;
+      case 'play':
+        if (currentTrack != null && !playing && !downloading) {
+          await togglePlay();
+        }
+        break;
+      case 'pause':
+        if (playing) {
+          await togglePlay();
+        }
+        break;
+      case 'stop':
+        await stop();
+        break;
+      case 'next':
+        await playAdjacent(1);
+        break;
+      case 'previous':
+        await playAdjacent(-1);
+        break;
     }
   }
 
@@ -668,6 +724,22 @@ class MusicController extends ChangeNotifier {
     await play(tracks[index]);
   }
 
+  Future<void> playAdjacent(int offset) async {
+    final track = currentTrack;
+    final tracks = allTracks;
+    if (track == null || tracks.isEmpty) {
+      return;
+    }
+
+    final currentIndex = tracks.indexWhere((item) => item.id == track.id);
+    if (currentIndex < 0) {
+      return;
+    }
+
+    final nextIndex = (currentIndex + offset) % tracks.length;
+    await play(tracks[nextIndex < 0 ? tracks.length - 1 : nextIndex]);
+  }
+
   Future<void> play(Track track) async {
     currentTrack = track;
     position = Duration.zero;
@@ -682,6 +754,7 @@ class MusicController extends ChangeNotifier {
       _recordPlay(track);
       downloading = false;
       playing = true;
+      await _updateNowPlaying();
       _startPositionTimer();
     } catch (error) {
       downloading = false;
@@ -710,6 +783,7 @@ class MusicController extends ChangeNotifier {
       playing = true;
       _startPositionTimer();
     }
+    await _updateNowPlaying();
     notifyListeners();
   }
 
@@ -730,6 +804,7 @@ class MusicController extends ChangeNotifier {
         : value;
     position = next;
     await _player.seek(next, playAfterSeek: playing);
+    await _updateNowPlaying();
     notifyListeners();
   }
 
@@ -740,7 +815,24 @@ class MusicController extends ChangeNotifier {
     playing = false;
     downloading = false;
     position = Duration.zero;
+    await _updateNowPlaying();
     notifyListeners();
+  }
+
+  Future<void> _updateNowPlaying() async {
+    final track = currentTrack;
+    if (track == null) {
+      return;
+    }
+
+    await _player.updateNowPlaying(
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      duration: track.duration,
+      position: position,
+      playing: playing,
+    );
   }
 
   Future<void> _loadUserLibrary() async {
@@ -832,6 +924,9 @@ class MusicController extends ChangeNotifier {
       if (position >= track.duration) {
         await stop();
       } else {
+        if (position.inMilliseconds % 1000 == 0) {
+          await _updateNowPlaying();
+        }
         notifyListeners();
       }
     });
@@ -1013,10 +1108,30 @@ class _MusicHomePageState extends State<MusicHomePage> {
               if (editingText) {
                 return;
               }
-              if (controller.currentTrack != null && !controller.downloading) {
-                controller.togglePlay();
-              }
+              controller.handleMediaCommand('toggle');
             },
+            const SingleActivator(LogicalKeyboardKey.mediaPlayPause): () =>
+                controller.handleMediaCommand('toggle'),
+            const SingleActivator(LogicalKeyboardKey.mediaPlay): () =>
+                controller.handleMediaCommand('play'),
+            const SingleActivator(LogicalKeyboardKey.mediaPause): () =>
+                controller.handleMediaCommand('pause'),
+            const SingleActivator(LogicalKeyboardKey.mediaStop): () =>
+                controller.handleMediaCommand('stop'),
+            const SingleActivator(LogicalKeyboardKey.mediaTrackNext): () =>
+                controller.handleMediaCommand('next'),
+            const SingleActivator(LogicalKeyboardKey.mediaTrackPrevious): () =>
+                controller.handleMediaCommand('previous'),
+            const SingleActivator(
+              LogicalKeyboardKey.arrowRight,
+              control: true,
+            ): () =>
+                controller.seekRelative(const Duration(seconds: 10)),
+            const SingleActivator(
+              LogicalKeyboardKey.arrowLeft,
+              control: true,
+            ): () =>
+                controller.seekRelative(const Duration(seconds: -10)),
           },
           child: Focus(
             autofocus: true,

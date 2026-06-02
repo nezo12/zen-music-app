@@ -37,6 +37,14 @@ void SendMciCommand(const std::wstring& command) {
   mciSendStringW(command.c_str(), nullptr, 0, nullptr);
 }
 
+void SendMediaCommandToFlutter(const std::string& command) {
+  if (g_audio_channel) {
+    g_audio_channel->InvokeMethod(
+        "mediaCommand",
+        std::make_unique<flutter::EncodableValue>(command));
+  }
+}
+
 void RegisterAudioChannel(flutter::FlutterEngine* engine) {
   g_audio_channel = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       engine->messenger(), "zen_music/audio",
@@ -196,6 +204,30 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_APPCOMMAND: {
+      const int command = GET_APPCOMMAND_LPARAM(lparam);
+      switch (command) {
+        case APPCOMMAND_MEDIA_PLAY_PAUSE:
+          SendMediaCommandToFlutter("toggle");
+          return TRUE;
+        case APPCOMMAND_MEDIA_PLAY:
+          SendMediaCommandToFlutter("play");
+          return TRUE;
+        case APPCOMMAND_MEDIA_PAUSE:
+          SendMediaCommandToFlutter("pause");
+          return TRUE;
+        case APPCOMMAND_MEDIA_STOP:
+          SendMediaCommandToFlutter("stop");
+          return TRUE;
+        case APPCOMMAND_MEDIA_NEXTTRACK:
+          SendMediaCommandToFlutter("next");
+          return TRUE;
+        case APPCOMMAND_MEDIA_PREVIOUSTRACK:
+          SendMediaCommandToFlutter("previous");
+          return TRUE;
+      }
+      break;
+    }
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
