@@ -9,6 +9,7 @@ $checks = [
     'db_connection' => false,
     'users_table' => false,
     'sessions_table' => false,
+    'user_libraries_table' => false,
 ];
 
 try {
@@ -21,11 +22,15 @@ try {
     $stmt = $pdo->query("SHOW TABLES LIKE 'sessions'");
     $checks['sessions_table'] = (bool)$stmt->fetchColumn();
 
+    $stmt = $pdo->query("SHOW TABLES LIKE 'user_libraries'");
+    $checks['user_libraries_table'] = (bool)$stmt->fetchColumn();
+
     respond([
         'ok' => $checks['pdo_mysql']
             && $checks['db_connection']
             && $checks['users_table']
-            && $checks['sessions_table'],
+            && $checks['sessions_table']
+            && $checks['user_libraries_table'],
         'checks' => $checks,
     ]);
 } catch (Throwable $error) {

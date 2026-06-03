@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,7 +11,7 @@ const defaultApiUrl = 'https://shit.com.pl/zen-music/api';
 
 enum AppSection { home, search, library, liked, playlists, profile, settings }
 
-enum AppThemeChoice { spotify, ocean, violet, amber }
+enum AppThemeChoice { spotify, aurora, ocean, neon, violet, amber }
 
 enum LibrarySort { artist, title, newest }
 
@@ -74,6 +75,7 @@ class AppPalette {
     required this.surface,
     required this.input,
     required this.gradientStart,
+    required this.glow,
   });
 
   final Color accent;
@@ -81,17 +83,37 @@ class AppPalette {
   final Color surface;
   final Color input;
   final Color gradientStart;
+  final Color glow;
 }
 
 AppPalette _paletteFor(AppThemeChoice choice) {
   switch (choice) {
     case AppThemeChoice.ocean:
       return const AppPalette(
-        accent: Color(0xff38bdf8),
-        background: Color(0xff07121f),
-        surface: Color(0xff102033),
-        input: Color(0xff183047),
-        gradientStart: Color(0xff0c4a6e),
+        accent: Color(0xff2dd4bf),
+        background: Color(0xff061316),
+        surface: Color(0xff0e2428),
+        input: Color(0xff17383d),
+        gradientStart: Color(0xff0f766e),
+        glow: Color(0xff22d3ee),
+      );
+    case AppThemeChoice.aurora:
+      return const AppPalette(
+        accent: Color(0xffa7f3d0),
+        background: Color(0xff07110e),
+        surface: Color(0xff13231e),
+        input: Color(0xff1d342c),
+        gradientStart: Color(0xff047857),
+        glow: Color(0xff7dd3fc),
+      );
+    case AppThemeChoice.neon:
+      return const AppPalette(
+        accent: Color(0xfffb7185),
+        background: Color(0xff120811),
+        surface: Color(0xff21101f),
+        input: Color(0xff33182d),
+        gradientStart: Color(0xffbe185d),
+        glow: Color(0xff22d3ee),
       );
     case AppThemeChoice.violet:
       return const AppPalette(
@@ -100,6 +122,7 @@ AppPalette _paletteFor(AppThemeChoice choice) {
         surface: Color(0xff241733),
         input: Color(0xff312044),
         gradientStart: Color(0xff581c87),
+        glow: Color(0xfff0abfc),
       );
     case AppThemeChoice.amber:
       return const AppPalette(
@@ -108,6 +131,7 @@ AppPalette _paletteFor(AppThemeChoice choice) {
         surface: Color(0xff251d10),
         input: Color(0xff332816),
         gradientStart: Color(0xff92400e),
+        glow: Color(0xfffb7185),
       );
     case AppThemeChoice.spotify:
       return const AppPalette(
@@ -116,6 +140,7 @@ AppPalette _paletteFor(AppThemeChoice choice) {
         surface: Color(0xff181818),
         input: Color(0xff242424),
         gradientStart: Color(0xff1f5134),
+        glow: Color(0xff86efac),
       );
   }
 }
@@ -132,6 +157,27 @@ class Artist {
   final String name;
   final List<Track> tracks;
   final Uri? imageUrl;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'imageUrl': imageUrl?.toString(),
+      'tracks': tracks.map((track) => track.toJson()).toList(),
+    };
+  }
+
+  factory Artist.fromJson(Map<String, dynamic> json) {
+    return Artist(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      imageUrl: _uriOrNull(json['imageUrl']?.toString()),
+      tracks: (json['tracks'] as List<dynamic>? ?? <dynamic>[])
+          .map((item) => Track.fromJson(Map<String, dynamic>.from(item as Map)))
+          .where((track) => track.id.isNotEmpty)
+          .toList(),
+    );
+  }
 }
 
 class Track {
@@ -156,6 +202,42 @@ class Track {
   final Color color;
   final IconData icon;
   final Uri? coverUrl;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'artist': artist,
+      'album': album,
+      'duration': duration.inSeconds,
+      'url': url.toString(),
+      'color': color.toARGB32(),
+      'coverUrl': coverUrl?.toString(),
+    };
+  }
+
+  factory Track.fromJson(Map<String, dynamic> json) {
+    return Track(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      artist: json['artist']?.toString() ?? '',
+      album: json['album']?.toString() ?? 'Single',
+      duration: Duration(
+        seconds: int.tryParse('${json['duration'] ?? 180}') ?? 180,
+      ),
+      url: Uri.parse(json['url']?.toString() ?? ''),
+      color: Color(int.tryParse('${json['color']}') ?? 0xff1ed760),
+      icon: Icons.album_outlined,
+      coverUrl: _uriOrNull(json['coverUrl']?.toString()),
+    );
+  }
+}
+
+Uri? _uriOrNull(String? value) {
+  if (value == null || value.isEmpty) {
+    return null;
+  }
+  return Uri.tryParse(value);
 }
 
 class Playlist {
@@ -237,6 +319,19 @@ class AuthClient {
     return _userFromJson(Map<String, dynamic>.from(data['user'] as Map));
   }
 
+  Future<Map<String, dynamic>?> fetchLibrary(String token) async {
+    final data = await _post('library_get.php', {'token': token});
+    final library = data['library'];
+    if (library == null) {
+      return null;
+    }
+    return Map<String, dynamic>.from(library as Map);
+  }
+
+  Future<void> saveLibrary(String token, Map<String, dynamic> library) async {
+    await _post('library_save.php', {'token': token, 'library': library});
+  }
+
   Future<void> logout(String token) async {
     await _post('logout.php', {'token': token});
   }
@@ -258,7 +353,7 @@ class AuthClient {
 
   Future<Map<String, dynamic>> _post(
     String endpoint,
-    Map<String, String> body,
+    Map<String, dynamic> body,
   ) async {
     final uri = baseUri.replace(
       pathSegments: <String>[
@@ -317,6 +412,12 @@ class SessionStore {
     final dir = await _appDataDir();
     await dir.create(recursive: true);
     return File('${dir.path}${Platform.pathSeparator}library_$userId.json');
+  }
+
+  Future<File> catalogFile() async {
+    final dir = await _appDataDir();
+    await dir.create(recursive: true);
+    return File('${dir.path}${Platform.pathSeparator}catalog.json');
   }
 
   Future<void> clear() async {
@@ -379,14 +480,18 @@ class NativeAudioPlayer {
     required Duration position,
     required bool playing,
   }) async {
-    await _channel.invokeMethod<void>('updateNowPlaying', {
-      'title': title,
-      'artist': artist,
-      'album': album,
-      'duration': duration.inSeconds,
-      'position': position.inSeconds,
-      'playing': playing,
-    });
+    try {
+      await _channel.invokeMethod<void>('updateNowPlaying', {
+        'title': title,
+        'artist': artist,
+        'album': album,
+        'duration': duration.inSeconds,
+        'position': position.inSeconds,
+        'playing': playing,
+      });
+    } on MissingPluginException {
+      // Now playing metadata is optional; playback should keep working without it.
+    }
   }
 }
 
@@ -401,6 +506,8 @@ class MusicController extends ChangeNotifier {
   List<Artist> artists = <Artist>[];
   Set<String> likedTrackIds = <String>{};
   Set<String> followedArtistIds = <String>{};
+  Set<String> cachedTrackIds = <String>{};
+  Set<String> offlinePlaylistIds = <String>{};
   List<Playlist> playlists = <Playlist>[];
   List<String> recentTrackIds = <String>[];
   Map<String, int> playCounts = <String, int>{};
@@ -412,6 +519,8 @@ class MusicController extends ChangeNotifier {
   bool authLoading = false;
   bool playing = false;
   bool downloading = false;
+  bool offlineDownloading = false;
+  bool likedTracksOffline = false;
   bool registering = false;
   String search = '';
   String? message;
@@ -562,12 +671,21 @@ class MusicController extends ChangeNotifier {
 
     try {
       artists = await LibraryClient(libraryUrl).fetchArtists();
+      await _saveCatalog();
+      await _refreshCachedTracks();
       if (artists.isEmpty) {
         message = 'Nie znaleziono artystow. Sprawdz library.json.';
       }
     } catch (error) {
-      artists = <Artist>[];
-      message = 'Nie moge pobrac biblioteki: $error';
+      final cached = await _loadCatalog();
+      if (cached.isNotEmpty) {
+        artists = cached;
+        await _refreshCachedTracks();
+        message = 'Tryb offline: pokazuje ostatnio zapisana biblioteke.';
+      } else {
+        artists = <Artist>[];
+        message = 'Nie moge pobrac biblioteki: $error';
+      }
     } finally {
       loading = false;
       notifyListeners();
@@ -613,6 +731,7 @@ class MusicController extends ChangeNotifier {
   bool isFollowing(Artist artist) => followedArtistIds.contains(artist.id);
 
   Future<void> toggleLiked(Track track) async {
+    final shouldDownload = !likedTrackIds.contains(track.id);
     if (likedTrackIds.contains(track.id)) {
       likedTrackIds.remove(track.id);
     } else {
@@ -620,6 +739,10 @@ class MusicController extends ChangeNotifier {
     }
     await _saveUserLibrary();
     notifyListeners();
+
+    if (shouldDownload && likedTracksOffline) {
+      await downloadTrackForOffline(track);
+    }
   }
 
   Future<void> toggleFollowArtist(Artist artist) async {
@@ -650,15 +773,28 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deletePlaylist(Playlist playlist) async {
+    playlists = playlists.where((item) => item.id != playlist.id).toList();
+    offlinePlaylistIds.remove(playlist.id);
+    await _saveUserLibrary();
+    notifyListeners();
+  }
+
   Future<void> addToPlaylist(Playlist playlist, Track track) async {
+    var added = false;
     playlists = playlists.map((item) {
       if (item.id != playlist.id || item.trackIds.contains(track.id)) {
         return item;
       }
+      added = true;
       return item.copyWith(trackIds: <String>[...item.trackIds, track.id]);
     }).toList();
     await _saveUserLibrary();
     notifyListeners();
+
+    if (added && offlinePlaylistIds.contains(playlist.id)) {
+      await downloadTrackForOffline(track);
+    }
   }
 
   Future<void> removeFromPlaylist(Playlist playlist, Track track) async {
@@ -750,6 +886,7 @@ class MusicController extends ChangeNotifier {
 
     try {
       final localFile = await LibraryClient(libraryUrl).downloadTrack(track);
+      cachedTrackIds.add(track.id);
       await _player.playFile(localFile.path);
       _recordPlay(track);
       downloading = false;
@@ -762,6 +899,97 @@ class MusicController extends ChangeNotifier {
       message = 'Nie moge odtworzyc pliku: $error';
     }
     notifyListeners();
+  }
+
+  Future<void> downloadLikedTracks() async {
+    likedTracksOffline = true;
+    await _saveUserLibrary();
+    await downloadTracks(likedTracks, label: 'polubione utwory');
+  }
+
+  Future<void> downloadPlaylist(Playlist playlist) async {
+    offlinePlaylistIds.add(playlist.id);
+    await _saveUserLibrary();
+    await downloadTracks(
+      tracksForPlaylist(playlist),
+      label: 'playliste "${playlist.name}"',
+    );
+  }
+
+  Future<void> downloadTrackForOffline(Track track) async {
+    if (offlineDownloading || cachedTrackIds.contains(track.id)) {
+      return;
+    }
+
+    offlineDownloading = true;
+    message = 'Pobieram "${track.title}" offline...';
+    notifyListeners();
+
+    try {
+      await LibraryClient(libraryUrl).downloadTrack(track);
+      cachedTrackIds.add(track.id);
+      message = 'Pobrano offline: ${track.title}.';
+    } catch (error) {
+      message = 'Nie moge pobrac offline: $error';
+    } finally {
+      offlineDownloading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeOfflineTrack(Track track) async {
+    final file = await LibraryClient.cachedTrackFile(track);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    cachedTrackIds.remove(track.id);
+    likedTracksOffline = _tracksFullyCached(likedTracks);
+    offlinePlaylistIds = {
+      for (final playlist in playlists)
+        if (_tracksFullyCached(tracksForPlaylist(playlist))) playlist.id,
+    };
+    await _saveUserLibrary();
+    notifyListeners();
+  }
+
+  bool isTrackCached(Track track) => cachedTrackIds.contains(track.id);
+
+  bool areTracksCached(List<Track> tracks) => _tracksFullyCached(tracks);
+
+  bool _tracksFullyCached(List<Track> tracks) {
+    return tracks.isNotEmpty &&
+        tracks.every((track) => cachedTrackIds.contains(track.id));
+  }
+
+  Future<void> downloadTracks(
+    List<Track> tracks, {
+    required String label,
+  }) async {
+    if (tracks.isEmpty || offlineDownloading) {
+      return;
+    }
+
+    offlineDownloading = true;
+    message = 'Pobieram $label do offline...';
+    notifyListeners();
+
+    var downloaded = 0;
+    try {
+      final client = LibraryClient(libraryUrl);
+      for (final track in tracks) {
+        await client.downloadTrack(track);
+        cachedTrackIds.add(track.id);
+        downloaded += 1;
+        message = 'Pobrano $downloaded/${tracks.length}: $label';
+        notifyListeners();
+      }
+      message = 'Gotowe offline: $label.';
+    } catch (error) {
+      message = 'Nie moge pobrac offline: $error';
+    } finally {
+      offlineDownloading = false;
+      notifyListeners();
+    }
   }
 
   Future<void> _recordPlay(Track track) async {
@@ -835,58 +1063,73 @@ class MusicController extends ChangeNotifier {
     );
   }
 
+  Future<void> _saveCatalog() async {
+    final file = await _sessionStore.catalogFile();
+    await file.writeAsString(
+      jsonEncode({
+        'artists': artists.map((artist) => artist.toJson()).toList(),
+      }),
+    );
+  }
+
+  Future<List<Artist>> _loadCatalog() async {
+    final file = await _sessionStore.catalogFile();
+    if (!await file.exists()) {
+      return <Artist>[];
+    }
+
+    try {
+      final data = Map<String, dynamic>.from(
+        jsonDecode(await file.readAsString()) as Map,
+      );
+      return (data['artists'] as List<dynamic>? ?? <dynamic>[])
+          .map(
+            (item) => Artist.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .where((artist) => artist.id.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return <Artist>[];
+    }
+  }
+
+  Future<void> _refreshCachedTracks() async {
+    final ids = <String>{};
+    for (final track in allTracks) {
+      if (await LibraryClient.isTrackCached(track)) {
+        ids.add(track.id);
+      }
+    }
+    cachedTrackIds = ids;
+  }
+
   Future<void> _loadUserLibrary() async {
     final user = session?.user;
     if (user == null) {
       return;
     }
 
-    final file = await _sessionStore.libraryFile(user.id);
-    if (!await file.exists()) {
-      likedTrackIds = <String>{};
-      playlists = <Playlist>[];
-      return;
-    }
-
     try {
-      final data = jsonDecode(await file.readAsString()) as Map;
-      likedTrackIds = (data['likedTrackIds'] as List<dynamic>? ?? <dynamic>[])
-          .map((id) => id.toString())
-          .toSet();
-      followedArtistIds =
-          (data['followedArtistIds'] as List<dynamic>? ?? <dynamic>[])
-              .map((id) => id.toString())
-              .toSet();
-      recentTrackIds = (data['recentTrackIds'] as List<dynamic>? ?? <dynamic>[])
-          .map((id) => id.toString())
-          .toList();
-      playCounts =
-          (data['playCounts'] as Map<dynamic, dynamic>? ?? <dynamic, dynamic>{})
-              .map(
-                (key, value) =>
-                    MapEntry(key.toString(), int.tryParse('$value') ?? 0),
-              );
-      playlists = (data['playlists'] as List<dynamic>? ?? <dynamic>[])
-          .map(
-            (item) => Playlist.fromJson(Map<String, dynamic>.from(item as Map)),
-          )
-          .where((playlist) => playlist.id.isNotEmpty)
-          .toList();
-      themeChoice = AppThemeChoice.values.firstWhere(
-        (theme) => theme.name == data['themeChoice']?.toString(),
-        orElse: () => AppThemeChoice.spotify,
-      );
-      sort = LibrarySort.values.firstWhere(
-        (item) => item.name == data['sort']?.toString(),
-        orElse: () => LibrarySort.artist,
-      );
-      appThemeNotifier.value = themeChoice;
+      final remote = session == null
+          ? null
+          : await _authClient.fetchLibrary(session!.token);
+      if (remote != null) {
+        _applyLibraryJson(remote);
+        await _writeLocalLibrary();
+        return;
+      }
+
+      final local = await _readLocalLibrary();
+      if (local != null) {
+        _applyLibraryJson(local);
+        await _syncUserLibrary();
+        return;
+      }
+
+      _applyLibraryJson(<String, dynamic>{});
     } catch (_) {
-      likedTrackIds = <String>{};
-      followedArtistIds = <String>{};
-      playlists = <Playlist>[];
-      recentTrackIds = <String>[];
-      playCounts = <String, int>{};
+      final local = await _readLocalLibrary();
+      _applyLibraryJson(local ?? <String, dynamic>{});
     }
   }
 
@@ -896,18 +1139,104 @@ class MusicController extends ChangeNotifier {
       return;
     }
 
-    final file = await _sessionStore.libraryFile(user.id);
-    await file.writeAsString(
-      jsonEncode({
-        'likedTrackIds': likedTrackIds.toList(),
-        'followedArtistIds': followedArtistIds.toList(),
-        'playlists': playlists.map((playlist) => playlist.toJson()).toList(),
-        'recentTrackIds': recentTrackIds,
-        'playCounts': playCounts,
-        'themeChoice': themeChoice.name,
-        'sort': sort.name,
-      }),
+    await _writeLocalLibrary();
+    await _syncUserLibrary();
+  }
+
+  Map<String, dynamic> _libraryJson() {
+    return {
+      'likedTrackIds': likedTrackIds.toList(),
+      'followedArtistIds': followedArtistIds.toList(),
+      'offlinePlaylistIds': offlinePlaylistIds.toList(),
+      'likedTracksOffline': likedTracksOffline,
+      'playlists': playlists.map((playlist) => playlist.toJson()).toList(),
+      'recentTrackIds': recentTrackIds,
+      'playCounts': playCounts,
+      'themeChoice': themeChoice.name,
+      'sort': sort.name,
+    };
+  }
+
+  void _applyLibraryJson(Map<String, dynamic> data) {
+    likedTrackIds = (data['likedTrackIds'] as List<dynamic>? ?? <dynamic>[])
+        .map((id) => id.toString())
+        .toSet();
+    followedArtistIds =
+        (data['followedArtistIds'] as List<dynamic>? ?? <dynamic>[])
+            .map((id) => id.toString())
+            .toSet();
+    offlinePlaylistIds =
+        (data['offlinePlaylistIds'] as List<dynamic>? ?? <dynamic>[])
+            .map((id) => id.toString())
+            .toSet();
+    likedTracksOffline =
+        data['likedTracksOffline'] == true ||
+        data['likedTracksOffline']?.toString() == 'true';
+    recentTrackIds = (data['recentTrackIds'] as List<dynamic>? ?? <dynamic>[])
+        .map((id) => id.toString())
+        .toList();
+    playCounts =
+        (data['playCounts'] as Map<dynamic, dynamic>? ?? <dynamic, dynamic>{})
+            .map(
+              (key, value) =>
+                  MapEntry(key.toString(), int.tryParse('$value') ?? 0),
+            );
+    playlists = (data['playlists'] as List<dynamic>? ?? <dynamic>[])
+        .map(
+          (item) => Playlist.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .where((playlist) => playlist.id.isNotEmpty)
+        .toList();
+    themeChoice = AppThemeChoice.values.firstWhere(
+      (theme) => theme.name == data['themeChoice']?.toString(),
+      orElse: () => AppThemeChoice.spotify,
     );
+    sort = LibrarySort.values.firstWhere(
+      (item) => item.name == data['sort']?.toString(),
+      orElse: () => LibrarySort.artist,
+    );
+    appThemeNotifier.value = themeChoice;
+  }
+
+  Future<Map<String, dynamic>?> _readLocalLibrary() async {
+    final user = session?.user;
+    if (user == null) {
+      return null;
+    }
+
+    final file = await _sessionStore.libraryFile(user.id);
+    if (!await file.exists()) {
+      return null;
+    }
+
+    try {
+      return Map<String, dynamic>.from(
+        jsonDecode(await file.readAsString()) as Map,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeLocalLibrary() async {
+    final user = session?.user;
+    if (user == null) {
+      return;
+    }
+
+    final file = await _sessionStore.libraryFile(user.id);
+    await file.writeAsString(jsonEncode(_libraryJson()));
+  }
+
+  Future<void> _syncUserLibrary() async {
+    final token = session?.token;
+    if (token == null) {
+      return;
+    }
+
+    try {
+      await _authClient.saveLibrary(token, _libraryJson());
+    } catch (_) {}
   }
 
   void _startPositionTimer() {
@@ -980,11 +1309,7 @@ class LibraryClient {
   }
 
   Future<File> downloadTrack(Track track) async {
-    final cacheDir = Directory('${Directory.systemTemp.path}/zen_music');
-    await cacheDir.create(recursive: true);
-
-    final safeId = track.id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    final file = File('${cacheDir.path}${Platform.pathSeparator}$safeId.wav');
+    final file = await cachedTrackFile(track);
     if (await file.exists() && await file.length() > 44) {
       return file;
     }
@@ -999,6 +1324,27 @@ class LibraryClient {
     await response.pipe(sink);
     await sink.close();
     return file;
+  }
+
+  static Future<bool> isTrackCached(Track track) async {
+    final file = await cachedTrackFile(track);
+    return await file.exists() && await file.length() > 44;
+  }
+
+  static Future<File> cachedTrackFile(Track track) async {
+    final cacheDir = await _offlineCacheDir();
+    final safeId = track.id.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return File('${cacheDir.path}${Platform.pathSeparator}$safeId.wav');
+  }
+
+  static Future<Directory> _offlineCacheDir() async {
+    final appData = Platform.environment['APPDATA'];
+    final base = appData != null && appData.isNotEmpty
+        ? '$appData${Platform.pathSeparator}ZenMusic'
+        : '${Directory.systemTemp.path}${Platform.pathSeparator}ZenMusic';
+    final dir = Directory('$base${Platform.pathSeparator}offline');
+    await dir.create(recursive: true);
+    return dir;
   }
 
   Future<Map<String, dynamic>> _getJson(Uri uri) async {
@@ -1017,34 +1363,62 @@ class LibraryClient {
     String artistPath,
     Map<String, dynamic> json,
   ) {
-    final album = json['album']?.toString() ?? 'Single';
+    Track parseTrack(
+      Map<String, dynamic> track,
+      String album,
+      String? albumImage,
+    ) {
+      final file = track['file']?.toString() ?? '';
+      final id = '${artist.toLowerCase()}-$file'.replaceAll(
+        RegExp(r'[^a-zA-Z0-9_-]'),
+        '_',
+      );
+      final cover = track['cover']?.toString() ?? albumImage;
+      return Track(
+        id: id,
+        title: track['title']?.toString() ?? file,
+        artist: artist,
+        album: track['album']?.toString() ?? album,
+        duration: Duration(
+          seconds: int.tryParse('${track['duration'] ?? 180}') ?? 180,
+        ),
+        url: _resolveFlexible(<String>[artistPath], file),
+        color: _colorFor(artist),
+        icon: Icons.album_outlined,
+        coverUrl: cover == null || cover.isEmpty
+            ? null
+            : _resolveFlexible(<String>[artistPath], cover),
+      );
+    }
+
+    final tracks = <Track>[];
+    final defaultAlbum = json['album']?.toString() ?? 'Single';
     final rawTracks = json['tracks'] as List<dynamic>? ?? <dynamic>[];
-    return rawTracks
-        .map((item) {
-          final track = Map<String, dynamic>.from(item as Map);
-          final file = track['file']?.toString() ?? '';
-          final id = '${artist.toLowerCase()}-$file'.replaceAll(
-            RegExp(r'[^a-zA-Z0-9_-]'),
-            '_',
-          );
-          final cover = track['cover']?.toString();
-          return Track(
-            id: id,
-            title: track['title']?.toString() ?? file,
-            artist: artist,
-            album: track['album']?.toString() ?? album,
-            duration: Duration(
-              seconds: int.tryParse('${track['duration'] ?? 180}') ?? 180,
-            ),
-            url: _resolveFlexible(<String>[artistPath], file),
-            color: _colorFor(artist),
-            icon: Icons.album_outlined,
-            coverUrl: cover == null || cover.isEmpty
-                ? null
-                : _resolveFlexible(<String>[artistPath], cover),
-          );
-        })
-        .where((track) => track.url.path.endsWith('.wav'))
+    for (final item in rawTracks) {
+      tracks.add(
+        parseTrack(Map<String, dynamic>.from(item as Map), defaultAlbum, null),
+      );
+    }
+
+    final rawAlbums = json['albums'] as List<dynamic>? ?? <dynamic>[];
+    for (final item in rawAlbums) {
+      final albumMap = Map<String, dynamic>.from(item as Map);
+      final album = albumMap['album']?.toString() ?? defaultAlbum;
+      final albumImage = albumMap['image']?.toString();
+      final albumTracks = albumMap['tracks'] as List<dynamic>? ?? <dynamic>[];
+      for (final track in albumTracks) {
+        tracks.add(
+          parseTrack(
+            Map<String, dynamic>.from(track as Map),
+            album,
+            albumImage,
+          ),
+        );
+      }
+    }
+
+    return tracks
+        .where((track) => track.url.path.toLowerCase().endsWith('.wav'))
         .toList();
   }
 
@@ -1136,44 +1510,81 @@ class _MusicHomePageState extends State<MusicHomePage> {
           child: Focus(
             autofocus: true,
             child: Scaffold(
-              body: SafeArea(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 1120;
-                    return Row(
-                      children: [
-                        if (wide) _LeftLibraryPanel(controller: controller),
-                        Expanded(
-                          child: Column(
-                            children: [
-                              _SpotifyTopNav(controller: controller),
-                              if (controller.message != null)
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    10,
-                                    0,
-                                    10,
-                                    10,
+              backgroundColor: Colors.transparent,
+              body: Stack(
+                children: [
+                  _AnimatedAppBackdrop(
+                    palette: _paletteFor(controller.themeChoice),
+                    playing: controller.playing,
+                  ),
+                  SafeArea(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >= 1120;
+                        return Row(
+                          children: [
+                            if (wide) _LeftLibraryPanel(controller: controller),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  _SpotifyTopNav(controller: controller),
+                                  if (controller.message != null)
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        10,
+                                        0,
+                                        10,
+                                        10,
+                                      ),
+                                      child: _StatusBanner(
+                                        message: controller.message!,
+                                      ),
+                                    ),
+                                  Expanded(
+                                    child: controller.loading
+                                        ? const Center(
+                                            child: CircularProgressIndicator(),
+                                          )
+                                        : AnimatedSwitcher(
+                                            duration: const Duration(
+                                              milliseconds: 260,
+                                            ),
+                                            switchInCurve: Curves.easeOutCubic,
+                                            switchOutCurve: Curves.easeInCubic,
+                                            transitionBuilder:
+                                                (child, animation) {
+                                                  return FadeTransition(
+                                                    opacity: animation,
+                                                    child: SlideTransition(
+                                                      position: Tween<Offset>(
+                                                        begin: const Offset(
+                                                          0.02,
+                                                          0,
+                                                        ),
+                                                        end: Offset.zero,
+                                                      ).animate(animation),
+                                                      child: child,
+                                                    ),
+                                                  );
+                                                },
+                                            child: KeyedSubtree(
+                                              key: ValueKey(controller.section),
+                                              child: _ContentView(
+                                                controller: controller,
+                                              ),
+                                            ),
+                                          ),
                                   ),
-                                  child: _StatusBanner(
-                                    message: controller.message!,
-                                  ),
-                                ),
-                              Expanded(
-                                child: controller.loading
-                                    ? const Center(
-                                        child: CircularProgressIndicator(),
-                                      )
-                                    : _ContentView(controller: controller),
+                                ],
                               ),
-                            ],
-                          ),
-                        ),
-                        if (wide) _NowPlayingPanel(controller: controller),
-                      ],
-                    );
-                  },
-                ),
+                            ),
+                            if (wide) _NowPlayingPanel(controller: controller),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
               bottomNavigationBar: _PlayerBar(controller: controller),
             ),
@@ -1181,6 +1592,152 @@ class _MusicHomePageState extends State<MusicHomePage> {
         );
       },
     );
+  }
+}
+
+class _AnimatedAppBackdrop extends StatefulWidget {
+  const _AnimatedAppBackdrop({required this.palette, required this.playing});
+
+  final AppPalette palette;
+  final bool playing;
+
+  @override
+  State<_AnimatedAppBackdrop> createState() => _AnimatedAppBackdropState();
+}
+
+class _AnimatedAppBackdropState extends State<_AnimatedAppBackdrop>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 18),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return CustomPaint(
+          painter: _BackdropPainter(
+            palette: widget.palette,
+            progress: _controller.value,
+            energy: widget.playing ? 1 : 0.35,
+          ),
+          child: const SizedBox.expand(),
+        );
+      },
+    );
+  }
+}
+
+class _BackdropPainter extends CustomPainter {
+  const _BackdropPainter({
+    required this.palette,
+    required this.progress,
+    required this.energy,
+  });
+
+  final AppPalette palette;
+  final double progress;
+  final double energy;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final basePaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          palette.gradientStart.withValues(alpha: 0.55),
+          palette.background,
+          Colors.black,
+        ],
+        stops: const [0, 0.48, 1],
+      ).createShader(rect);
+    canvas.drawRect(rect, basePaint);
+
+    _drawWave(
+      canvas,
+      size,
+      color: palette.accent.withValues(alpha: 0.08 + energy * 0.08),
+      phase: progress * math.pi * 2,
+      yFactor: 0.24,
+      amplitude: 34 + energy * 18,
+    );
+    _drawWave(
+      canvas,
+      size,
+      color: palette.glow.withValues(alpha: 0.06 + energy * 0.07),
+      phase: progress * math.pi * 2 + math.pi,
+      yFactor: 0.78,
+      amplitude: 46 + energy * 20,
+    );
+
+    final sheen = Paint()
+      ..shader = RadialGradient(
+        center: Alignment(
+          math.sin(progress * math.pi * 2) * 0.45,
+          -0.78 + math.cos(progress * math.pi * 2) * 0.08,
+        ),
+        radius: 0.9,
+        colors: [
+          palette.glow.withValues(alpha: 0.14 * energy),
+          Colors.transparent,
+        ],
+      ).createShader(rect);
+    canvas.drawRect(rect, sheen);
+
+    final vignette = Paint()
+      ..shader = RadialGradient(
+        radius: 1.12,
+        colors: [Colors.transparent, Colors.black.withValues(alpha: 0.42)],
+      ).createShader(rect);
+    canvas.drawRect(rect, vignette);
+  }
+
+  void _drawWave(
+    Canvas canvas,
+    Size size, {
+    required Color color,
+    required double phase,
+    required double yFactor,
+    required double amplitude,
+  }) {
+    final path = Path()..moveTo(0, size.height * yFactor);
+    for (double x = 0; x <= size.width; x += 22) {
+      final y =
+          size.height * yFactor +
+          math.sin((x / size.width * math.pi * 2) + phase) * amplitude +
+          math.sin((x / size.width * math.pi * 4) - phase * 0.7) *
+              amplitude *
+              0.38;
+      path.lineTo(x, y);
+    }
+    path
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BackdropPainter oldDelegate) {
+    return oldDelegate.palette != palette ||
+        oldDelegate.progress != progress ||
+        oldDelegate.energy != energy;
   }
 }
 
@@ -1296,13 +1853,15 @@ class _LeftLibraryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = _paletteFor(controller.themeChoice).accent;
+    final palette = _paletteFor(controller.themeChoice);
+    final accent = palette.accent;
     return Container(
       width: 300,
       margin: const EdgeInsets.fromLTRB(6, 6, 6, 0),
       decoration: BoxDecoration(
-        color: const Color(0xff121212),
+        color: palette.surface.withValues(alpha: 0.88),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
         children: [
@@ -1545,48 +2104,79 @@ class _SpotifyTopNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 58,
-      margin: const EdgeInsets.fromLTRB(0, 6, 0, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      color: Colors.black,
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Home',
-            icon: const Icon(Icons.home_filled),
-            onPressed: () => controller.setSection(AppSection.home),
+    final palette = _paletteFor(controller.themeChoice);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 560;
+        final tiny = constraints.maxWidth < 390;
+        return Container(
+          height: 58,
+          margin: const EdgeInsets.fromLTRB(0, 6, 0, 0),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 14),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.58),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
           ),
-          const SizedBox(width: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 430),
-            child: TextField(
-              onChanged: controller.setSearch,
-              decoration: const InputDecoration(
-                isDense: true,
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Czego chcesz posluchac?',
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Home',
+                icon: const Icon(Icons.home_filled),
+                onPressed: () => controller.setSection(AppSection.home),
               ),
-            ),
+              if (!tiny) const SizedBox(width: 6),
+              Expanded(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 430),
+                  child: TextField(
+                    onChanged: controller.setSearch,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: compact ? 'Szukaj' : 'Czego chcesz posluchac?',
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Losuj',
+                icon: Icon(Icons.shuffle, color: palette.accent),
+                onPressed: controller.playRandom,
+              ),
+              if (!compact)
+                IconButton(
+                  tooltip: 'Ustawienia',
+                  icon: const Icon(Icons.tune),
+                  onPressed: () => controller.setSection(AppSection.settings),
+                ),
+              if (!compact)
+                IconButton(
+                  tooltip: 'Profil',
+                  icon: const Icon(Icons.person),
+                  onPressed: () => controller.setSection(AppSection.profile),
+                ),
+              if (compact)
+                PopupMenuButton<AppSection>(
+                  tooltip: 'Menu',
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: controller.setSection,
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: AppSection.settings,
+                      child: Text('Ustawienia'),
+                    ),
+                    PopupMenuItem(
+                      value: AppSection.profile,
+                      child: Text('Profil'),
+                    ),
+                  ],
+                ),
+            ],
           ),
-          const Spacer(),
-          IconButton(
-            tooltip: 'Losuj',
-            icon: const Icon(Icons.shuffle),
-            onPressed: controller.playRandom,
-          ),
-          IconButton(
-            tooltip: 'Ustawienia',
-            icon: const Icon(Icons.tune),
-            onPressed: () => controller.setSection(AppSection.settings),
-          ),
-          IconButton(
-            tooltip: 'Profil',
-            icon: const Icon(Icons.person),
-            onPressed: () => controller.setSection(AppSection.profile),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1599,14 +2189,16 @@ class _NowPlayingPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final track = controller.currentTrack;
-    final accent = _paletteFor(controller.themeChoice).accent;
+    final palette = _paletteFor(controller.themeChoice);
+    final accent = palette.accent;
     return Container(
       width: 340,
       margin: const EdgeInsets.fromLTRB(6, 6, 6, 0),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xff121212),
+        color: palette.surface.withValues(alpha: 0.88),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: track == null
           ? Column(
@@ -2092,12 +2684,7 @@ class _ContentView extends StatelessWidget {
             ? const _EmptyView()
             : _LibraryView(artists: controller.artists, controller: controller);
       case AppSection.liked:
-        return _TrackListView(
-          title: 'Polubione utwory',
-          subtitle: '${controller.likedTracks.length} utworow',
-          tracks: controller.likedTracks,
-          controller: controller,
-        );
+        return _LikedSongsView(controller: controller);
       case AppSection.playlists:
         return _PlaylistsView(controller: controller);
       case AppSection.profile:
@@ -2184,6 +2771,7 @@ class _QuickTileGrid extends StatelessWidget {
         title: 'Polubione utwory',
         icon: Icons.favorite,
         color: _paletteFor(controller.themeChoice).accent,
+        gradient: true,
         onTap: () => controller.setSection(AppSection.liked),
       ),
       for (final playlist in controller.playlists.take(2))
@@ -2198,6 +2786,7 @@ class _QuickTileGrid extends StatelessWidget {
           title: track.title,
           icon: track.icon,
           color: track.color,
+          imageUrl: track.coverUrl,
           onTap: () => controller.play(track),
         ),
     ].take(8).toList();
@@ -2211,7 +2800,7 @@ class _QuickTileGrid extends StatelessWidget {
         final columns = constraints.maxWidth > 900 ? 4 : 2;
         return GridView.count(
           crossAxisCount: columns,
-          childAspectRatio: 4.6,
+          childAspectRatio: 3.8,
           crossAxisSpacing: 10,
           mainAxisSpacing: 10,
           shrinkWrap: true,
@@ -2229,12 +2818,16 @@ class _QuickTile extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.imageUrl,
+    this.gradient = false,
   });
 
   final String title;
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final Uri? imageUrl;
+  final bool gradient;
 
   @override
   Widget build(BuildContext context) {
@@ -2247,15 +2840,30 @@ class _QuickTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 64,
+              width: 82,
               height: double.infinity,
               decoration: BoxDecoration(
                 color: color,
+                gradient: gradient
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [color, Colors.white.withValues(alpha: 0.72)],
+                      )
+                    : null,
                 borderRadius: const BorderRadius.horizontal(
                   left: Radius.circular(5),
                 ),
               ),
-              child: Icon(icon, color: Colors.black),
+              clipBehavior: Clip.antiAlias,
+              child: imageUrl == null
+                  ? Icon(icon, color: Colors.black, size: 28)
+                  : Image.network(
+                      imageUrl.toString(),
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          Icon(icon, color: Colors.black, size: 28),
+                    ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -2357,44 +2965,247 @@ class _MiniTrackCard extends StatelessWidget {
   }
 }
 
-class _TrackListView extends StatelessWidget {
-  const _TrackListView({
+class _LikedSongsView extends StatelessWidget {
+  const _LikedSongsView({required this.controller});
+
+  final MusicController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final tracks = controller.likedTracks;
+    final palette = _paletteFor(controller.themeChoice);
+    final totalSeconds = tracks.fold<int>(
+      0,
+      (sum, track) => sum + track.duration.inSeconds,
+    );
+    final subtitle =
+        '${tracks.length} utworow - ${_formatDuration(Duration(seconds: totalSeconds))}';
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 126),
+      children: [
+        _PlaylistHero(
+          title: 'Polubione utwory',
+          eyebrow: 'Playlista',
+          subtitle: subtitle,
+          icon: Icons.favorite,
+          gradientColors: [palette.accent, palette.glow, palette.gradientStart],
+        ),
+        const SizedBox(height: 18),
+        _PlaylistActionBar(
+          tracks: tracks,
+          controller: controller,
+          onDownload: controller.downloadLikedTracks,
+        ),
+        const SizedBox(height: 12),
+        if (tracks.isEmpty)
+          const _EmptyView(message: 'Polubione utwory sa puste.')
+        else
+          _TrackTable(tracks: tracks, controller: controller),
+      ],
+    );
+  }
+}
+
+class _PlaylistHero extends StatelessWidget {
+  const _PlaylistHero({
     required this.title,
+    required this.eyebrow,
     required this.subtitle,
-    required this.tracks,
-    required this.controller,
+    required this.icon,
+    required this.gradientColors,
   });
 
   final String title;
+  final String eyebrow;
   final String subtitle;
+  final IconData icon;
+  final List<Color> gradientColors;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+        final artSize = compact ? 118.0 : 188.0;
+        final art = Container(
+          width: artSize,
+          height: artSize,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: gradientColors,
+            ),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: gradientColors.first.withValues(alpha: 0.22),
+                blurRadius: 32,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: compact ? 54 : 84),
+        );
+        final text = Column(
+          crossAxisAlignment: compact
+              ? CrossAxisAlignment.center
+              : CrossAxisAlignment.start,
+          children: [
+            Text(
+              eyebrow,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              textAlign: compact ? TextAlign.center : TextAlign.start,
+              style: TextStyle(
+                fontSize: compact ? 36 : 62,
+                height: 0.95,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(subtitle, style: const TextStyle(color: Colors.white70)),
+          ],
+        );
+
+        final content = compact
+            ? Column(children: [art, const SizedBox(height: 16), text])
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  art,
+                  const SizedBox(width: 22),
+                  Expanded(child: text),
+                ],
+              );
+
+        return Container(
+          padding: EdgeInsets.all(compact ? 18 : 26),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                gradientColors.last.withValues(alpha: 0.95),
+                gradientColors.first.withValues(alpha: 0.45),
+                Colors.black.withValues(alpha: 0.12),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+          child: content,
+        );
+      },
+    );
+  }
+}
+
+class _PlaylistActionBar extends StatelessWidget {
+  const _PlaylistActionBar({
+    required this.tracks,
+    required this.controller,
+    this.onDownload,
+  });
+
+  final List<Track> tracks;
+  final MusicController controller;
+  final Future<void> Function()? onDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = _paletteFor(controller.themeChoice);
+    final active = _isTrackGroupActive(tracks, controller);
+    final playing = active && controller.playing;
+    final cached = controller.areTracksCached(tracks);
+    return Row(
+      children: [
+        IconButton.filled(
+          tooltip: playing ? 'Pauza' : 'Odtworz',
+          style: IconButton.styleFrom(
+            backgroundColor: palette.accent,
+            foregroundColor: Colors.black,
+            fixedSize: const Size(54, 54),
+          ),
+          icon: Icon(playing ? Icons.pause : Icons.play_arrow, size: 30),
+          onPressed: tracks.isEmpty
+              ? null
+              : active
+              ? controller.togglePlay
+              : () => controller.play(tracks.first),
+        ),
+        const SizedBox(width: 10),
+        IconButton(
+          tooltip: cached ? 'Pobrane offline' : 'Pobierz offline',
+          icon: controller.offlineDownloading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.2),
+                )
+              : Icon(
+                  cached
+                      ? Icons.download_done
+                      : Icons.download_for_offline_outlined,
+                ),
+          color: cached ? palette.accent : Colors.white60,
+          onPressed: tracks.isEmpty || controller.offlineDownloading
+              ? null
+              : onDownload,
+        ),
+        const Spacer(),
+      ],
+    );
+  }
+}
+
+class _TrackTable extends StatelessWidget {
+  const _TrackTable({required this.tracks, required this.controller});
+
   final List<Track> tracks;
   final MusicController controller;
 
   @override
   Widget build(BuildContext context) {
-    if (tracks.isEmpty) {
-      return _EmptyView(message: '$title jest puste.');
-    }
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 126),
+    return Column(
       children: [
-        Text(
-          title,
-          style: Theme.of(
-            context,
-          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Row(
+            children: [
+              SizedBox(width: 28, child: Text('#')),
+              SizedBox(width: 58),
+              Expanded(flex: 3, child: Text('Tytul')),
+              Expanded(flex: 2, child: Text('Album')),
+              SizedBox(width: 74, child: Icon(Icons.schedule, size: 18)),
+              SizedBox(width: 150),
+            ],
+          ),
         ),
-        const SizedBox(height: 4),
-        Text(subtitle, style: const TextStyle(color: Colors.white60)),
-        const SizedBox(height: 18),
+        Divider(color: Colors.white.withValues(alpha: 0.08), height: 1),
+        const SizedBox(height: 6),
         for (var i = 0; i < tracks.length; i++) ...[
           _TrackTile(index: i + 1, track: tracks[i], controller: controller),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
         ],
       ],
     );
   }
+}
+
+bool _isTrackGroupActive(List<Track> tracks, MusicController controller) {
+  final current = controller.currentTrack;
+  if (current == null) {
+    return false;
+  }
+  return tracks.any((track) => track.id == current.id);
 }
 
 class _PlaylistsView extends StatelessWidget {
@@ -2404,6 +3215,7 @@ class _PlaylistsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = _paletteFor(controller.themeChoice);
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 126),
       children: [
@@ -2424,14 +3236,36 @@ class _PlaylistsView extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        _PinnedLikedPlaylistCard(controller: controller),
         const SizedBox(height: 18),
         if (controller.playlists.isEmpty)
-          const _EmptyView(message: 'Nie masz jeszcze playlist.')
+          Card(
+            margin: EdgeInsets.zero,
+            color: palette.surface.withValues(alpha: 0.72),
+            child: const Padding(
+              padding: EdgeInsets.all(18),
+              child: Text('Nie masz jeszcze playlist. Utworz pierwsza u gory.'),
+            ),
+          )
         else
-          for (final playlist in controller.playlists) ...[
-            _PlaylistCard(playlist: playlist, controller: controller),
-            const SizedBox(height: 14),
-          ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900 ? 2 : 1;
+              return GridView.count(
+                crossAxisCount: columns,
+                childAspectRatio: columns == 2 ? 2.35 : 3.6,
+                crossAxisSpacing: 14,
+                mainAxisSpacing: 14,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  for (final playlist in controller.playlists)
+                    _PlaylistCard(playlist: playlist, controller: controller),
+                ],
+              );
+            },
+          ),
       ],
     );
   }
@@ -2465,6 +3299,120 @@ class _PlaylistsView extends StatelessWidget {
   }
 }
 
+class _PinnedLikedPlaylistCard extends StatelessWidget {
+  const _PinnedLikedPlaylistCard({required this.controller});
+
+  final MusicController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = _paletteFor(controller.themeChoice);
+    final tracks = controller.likedTracks;
+    final active = _isTrackGroupActive(tracks, controller);
+    final playing = active && controller.playing;
+    final cached = controller.areTracksCached(tracks);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => controller.setSection(AppSection.liked),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                palette.gradientStart.withValues(alpha: 0.95),
+                palette.accent.withValues(alpha: 0.5),
+                palette.surface.withValues(alpha: 0.8),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [palette.accent, palette.glow],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.favorite,
+                  color: Colors.white,
+                  size: 34,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Przypiete',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Polubione utwory',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      '${tracks.length} utworow - zawsze na gorze',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton.filled(
+                tooltip: playing ? 'Pauza' : 'Odtworz polubione',
+                style: IconButton.styleFrom(
+                  backgroundColor: palette.accent,
+                  foregroundColor: Colors.black,
+                ),
+                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                onPressed: tracks.isEmpty
+                    ? null
+                    : active
+                    ? controller.togglePlay
+                    : () => controller.play(tracks.first),
+              ),
+              IconButton(
+                tooltip: cached ? 'Pobrane offline' : 'Pobierz offline',
+                icon: Icon(
+                  cached
+                      ? Icons.download_done
+                      : Icons.download_for_offline_outlined,
+                ),
+                color: cached ? palette.accent : Colors.white60,
+                onPressed: tracks.isEmpty || controller.offlineDownloading
+                    ? null
+                    : controller.downloadLikedTracks,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PlaylistCard extends StatelessWidget {
   const _PlaylistCard({required this.playlist, required this.controller});
 
@@ -2474,29 +3422,199 @@ class _PlaylistCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tracks = controller.tracksForPlaylist(playlist);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: ExpansionTile(
-        leading: const Icon(Icons.queue_music, color: Color(0xff1ed760)),
-        title: Text(playlist.name),
-        subtitle: Text('${tracks.length} utworow'),
-        children: [
-          if (tracks.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Dodaj utwory przez menu przy piosence.'),
-            )
-          else
-            for (var i = 0; i < tracks.length; i++)
-              _TrackTile(
-                index: i + 1,
-                track: tracks[i],
-                controller: controller,
-                playlist: playlist,
-              ),
+    final palette = _paletteFor(controller.themeChoice);
+    final cover = tracks.isEmpty ? null : tracks.first.coverUrl;
+    final active = _isTrackGroupActive(tracks, controller);
+    final playing = active && controller.playing;
+    final cached = controller.areTracksCached(tracks);
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: tracks.isEmpty ? null : () => controller.play(tracks.first),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _SquareImage(
+                      imageUrl: cover,
+                      color: palette.gradientStart,
+                      icon: Icons.queue_music,
+                      size: 72,
+                      radius: 8,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            playlist.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          Text(
+                            '${tracks.length} utworow',
+                            style: const TextStyle(color: Colors.white60),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: 'Opcje playlisty',
+                      icon: const Icon(Icons.more_horiz),
+                      onSelected: (value) async {
+                        if (value == 'delete') {
+                          await _confirmDelete(context);
+                          return;
+                        }
+                        if (value == 'download') {
+                          await controller.downloadPlaylist(playlist);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'download',
+                          child: Text('Pobierz offline'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Usun playliste'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: tracks.isEmpty
+                      ? const Align(
+                          alignment: Alignment.topLeft,
+                          child: Text(
+                            'Dodaj utwory przez menu przy piosence.',
+                            style: TextStyle(color: Colors.white60),
+                          ),
+                        )
+                      : Column(
+                          children: [
+                            for (final track in tracks.take(3))
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        track.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      _formatDuration(track.duration),
+                                      style: const TextStyle(
+                                        color: Colors.white54,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            if (tracks.length > 3)
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '+${tracks.length - 3} wiecej',
+                                  style: const TextStyle(color: Colors.white54),
+                                ),
+                              ),
+                          ],
+                        ),
+                ),
+                Row(
+                  children: [
+                    IconButton.filled(
+                      tooltip: playing ? 'Pauza' : 'Odtworz',
+                      style: IconButton.styleFrom(
+                        backgroundColor: palette.accent,
+                        foregroundColor: Colors.black,
+                      ),
+                      icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                      onPressed: tracks.isEmpty
+                          ? null
+                          : active
+                          ? controller.togglePlay
+                          : () => controller.play(tracks.first),
+                    ),
+                    IconButton(
+                      tooltip: 'Pobierz offline',
+                      icon: controller.offlineDownloading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              cached
+                                  ? Icons.download_done
+                                  : Icons.download_for_offline_outlined,
+                            ),
+                      color: cached ? palette.accent : Colors.white60,
+                      onPressed: tracks.isEmpty || controller.offlineDownloading
+                          ? null
+                          : () => controller.downloadPlaylist(playlist),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Usun playliste',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => _confirmDelete(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final delete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Usun playliste?'),
+        content: Text('Playlista "${playlist.name}" zostanie usunieta.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Anuluj'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Usun'),
+          ),
         ],
       ),
     );
+    if (delete == true) {
+      await controller.deletePlaylist(playlist);
+    }
   }
 }
 
@@ -2578,8 +3696,18 @@ class _SettingsView extends StatelessWidget {
               controller: controller,
             ),
             _ThemeTile(
+              label: 'Aurora',
+              choice: AppThemeChoice.aurora,
+              controller: controller,
+            ),
+            _ThemeTile(
               label: 'Ocean',
               choice: AppThemeChoice.ocean,
+              controller: controller,
+            ),
+            _ThemeTile(
+              label: 'Neon',
+              choice: AppThemeChoice.neon,
               controller: controller,
             ),
             _ThemeTile(
@@ -2812,6 +3940,7 @@ class _TrackTile extends StatelessWidget {
     final isCurrent = controller.currentTrack?.id == track.id;
     final busy = isCurrent && controller.downloading;
     final liked = controller.isLiked(track);
+    final cached = controller.isTrackCached(track);
 
     return Material(
       color: isCurrent ? const Color(0xff243829) : Colors.transparent,
@@ -2878,6 +4007,31 @@ class _TrackTile extends StatelessWidget {
                 style: const TextStyle(color: Colors.white60),
               ),
               const SizedBox(width: 8),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, animation) {
+                  return ScaleTransition(scale: animation, child: child);
+                },
+                child: IconButton(
+                  key: ValueKey('offline-${track.id}-$cached'),
+                  tooltip: cached
+                      ? 'Usun z pobranych'
+                      : 'Pobierz ten utwor offline',
+                  icon: Icon(
+                    cached
+                        ? Icons.download_done
+                        : Icons.download_for_offline_outlined,
+                    size: 20,
+                  ),
+                  color: cached ? const Color(0xff1ed760) : Colors.white54,
+                  onPressed: controller.offlineDownloading
+                      ? null
+                      : cached
+                      ? () => controller.removeOfflineTrack(track)
+                      : () => controller.downloadTrackForOffline(track),
+                ),
+              ),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: liked ? 'Usun z polubionych' : 'Dodaj do polubionych',
                 icon: Icon(liked ? Icons.favorite : Icons.favorite_border),
@@ -2888,6 +4042,14 @@ class _TrackTile extends StatelessWidget {
                 tooltip: 'Opcje',
                 icon: const Icon(Icons.more_horiz),
                 onSelected: (value) async {
+                  if (value == '__download__') {
+                    await controller.downloadTrackForOffline(track);
+                    return;
+                  }
+                  if (value == '__remove_download__') {
+                    await controller.removeOfflineTrack(track);
+                    return;
+                  }
                   if (value == '__remove__' && playlist != null) {
                     await controller.removeFromPlaylist(playlist!, track);
                     return;
@@ -2909,6 +4071,12 @@ class _TrackTile extends StatelessWidget {
                       value: '__remove__',
                       child: Text('Usun z playlisty'),
                     ),
+                  PopupMenuItem(
+                    value: cached ? '__remove_download__' : '__download__',
+                    child: Text(
+                      cached ? 'Usun z pobranych' : 'Pobierz offline',
+                    ),
+                  ),
                   if (controller.playlists.isEmpty)
                     const PopupMenuItem(
                       enabled: false,
@@ -2938,7 +4106,7 @@ class _TrackTile extends StatelessWidget {
 }
 
 class _TrackArt extends StatelessWidget {
-  const _TrackArt({required this.track});
+  const _TrackArt({super.key, required this.track});
 
   final Track track;
 
@@ -2956,6 +4124,7 @@ class _TrackArt extends StatelessWidget {
 
 class _SquareImage extends StatelessWidget {
   const _SquareImage({
+    super.key,
     required this.imageUrl,
     required this.color,
     required this.icon,
@@ -3019,16 +4188,33 @@ class _PlayerBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final track = controller.currentTrack;
+    final palette = _paletteFor(controller.themeChoice);
     final total = track?.duration ?? Duration.zero;
     final max = total.inMilliseconds.toDouble().clamp(1.0, double.infinity);
     final value = controller.position.inMilliseconds.toDouble().clamp(0.0, max);
     final compact = MediaQuery.sizeOf(context).width < 760;
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 240),
       height: 120,
-      decoration: const BoxDecoration(
-        color: Color(0xff181818),
-        border: Border(top: BorderSide(color: Color(0xff282828))),
+      decoration: BoxDecoration(
+        color: Color.lerp(
+          palette.surface,
+          Colors.black,
+          controller.playing ? 0.1 : 0.34,
+        )!.withValues(alpha: 0.96),
+        border: Border(
+          top: BorderSide(color: palette.accent.withValues(alpha: 0.22)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: palette.glow.withValues(
+              alpha: controller.playing ? 0.18 : 0.04,
+            ),
+            blurRadius: controller.playing ? 32 : 12,
+            offset: const Offset(0, -10),
+          ),
+        ],
       ),
       child: SafeArea(
         child: Padding(
@@ -3039,30 +4225,61 @@ class _PlayerBar extends StatelessWidget {
                 width: compact ? 190 : 280,
                 child: Row(
                   children: [
-                    if (track != null) ...[
-                      _TrackArt(track: track),
-                      const SizedBox(width: 12),
-                    ],
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: track == null
+                          ? _SquareImage(
+                              key: const ValueKey('empty-art'),
+                              imageUrl: null,
+                              color: palette.gradientStart,
+                              icon: Icons.graphic_eq,
+                              size: 52,
+                              radius: 8,
+                            )
+                          : _TrackArt(key: ValueKey(track.id), track: track),
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            track?.title ?? 'Wybierz utwor',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                          Text(
-                            track?.artist ?? 'Muzyka z shit.com.pl',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white60),
-                          ),
-                        ],
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: Column(
+                          key: ValueKey(track?.id ?? 'empty-text'),
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              track?.title ?? 'Wybierz utwor',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(
+                              track?.artist ?? 'Muzyka z shit.com.pl',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white60),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
+                    if (!compact && track != null)
+                      IconButton(
+                        tooltip: controller.isLiked(track)
+                            ? 'Usun z polubionych'
+                            : 'Dodaj do polubionych',
+                        icon: Icon(
+                          controller.isLiked(track)
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                        ),
+                        color: controller.isLiked(track)
+                            ? palette.accent
+                            : Colors.white70,
+                        onPressed: () => controller.toggleLiked(track),
+                      ),
                   ],
                 ),
               ),
@@ -3073,6 +4290,13 @@ class _PlayerBar extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
+                        IconButton(
+                          tooltip: 'Poprzedni',
+                          icon: const Icon(Icons.skip_previous),
+                          onPressed: track == null
+                              ? null
+                              : () => controller.playAdjacent(-1),
+                        ),
                         IconButton(
                           tooltip: 'Cofnij 10 sekund',
                           icon: const Icon(Icons.replay_10),
@@ -3085,8 +4309,9 @@ class _PlayerBar extends StatelessWidget {
                         IconButton.filled(
                           tooltip: controller.playing ? 'Pauza' : 'Odtworz',
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.white,
+                            backgroundColor: palette.accent,
                             foregroundColor: Colors.black,
+                            fixedSize: const Size(48, 48),
                           ),
                           icon: controller.downloading
                               ? const SizedBox(
@@ -3115,6 +4340,13 @@ class _PlayerBar extends StatelessWidget {
                                   const Duration(seconds: 10),
                                 ),
                         ),
+                        IconButton(
+                          tooltip: 'Nastepny',
+                          icon: const Icon(Icons.skip_next),
+                          onPressed: track == null
+                              ? null
+                              : () => controller.playAdjacent(1),
+                        ),
                       ],
                     ),
                     Row(
@@ -3124,7 +4356,7 @@ class _PlayerBar extends StatelessWidget {
                           child: Slider(
                             value: value,
                             max: max,
-                            activeColor: const Color(0xff1ed760),
+                            activeColor: palette.accent,
                             onChanged: track == null || controller.downloading
                                 ? null
                                 : (value) => controller.seekTo(

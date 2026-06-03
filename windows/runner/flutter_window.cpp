@@ -13,6 +13,11 @@ namespace {
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> g_audio_channel;
 
+constexpr int kHotkeyMediaPlayPause = 101;
+constexpr int kHotkeyMediaStop = 102;
+constexpr int kHotkeyMediaNext = 103;
+constexpr int kHotkeyMediaPrevious = 104;
+
 std::wstring Utf8ToWide(const std::string& value) {
   if (value.empty()) {
     return std::wstring();
@@ -43,6 +48,22 @@ void SendMediaCommandToFlutter(const std::string& command) {
         "mediaCommand",
         std::make_unique<flutter::EncodableValue>(command));
   }
+}
+
+void RegisterMediaHotkeys(HWND hwnd) {
+  RegisterHotKey(hwnd, kHotkeyMediaPlayPause, MOD_NOREPEAT,
+                 VK_MEDIA_PLAY_PAUSE);
+  RegisterHotKey(hwnd, kHotkeyMediaStop, MOD_NOREPEAT, VK_MEDIA_STOP);
+  RegisterHotKey(hwnd, kHotkeyMediaNext, MOD_NOREPEAT, VK_MEDIA_NEXT_TRACK);
+  RegisterHotKey(hwnd, kHotkeyMediaPrevious, MOD_NOREPEAT,
+                 VK_MEDIA_PREV_TRACK);
+}
+
+void UnregisterMediaHotkeys(HWND hwnd) {
+  UnregisterHotKey(hwnd, kHotkeyMediaPlayPause);
+  UnregisterHotKey(hwnd, kHotkeyMediaStop);
+  UnregisterHotKey(hwnd, kHotkeyMediaNext);
+  UnregisterHotKey(hwnd, kHotkeyMediaPrevious);
 }
 
 void RegisterAudioChannel(flutter::FlutterEngine* engine) {
@@ -173,6 +194,7 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   RegisterAudioChannel(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  RegisterMediaHotkeys(GetHandle());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -187,6 +209,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  UnregisterMediaHotkeys(GetHandle());
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -209,6 +233,23 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_HOTKEY: {
+      switch (static_cast<int>(wparam)) {
+        case kHotkeyMediaPlayPause:
+          SendMediaCommandToFlutter("toggle");
+          return TRUE;
+        case kHotkeyMediaStop:
+          SendMediaCommandToFlutter("stop");
+          return TRUE;
+        case kHotkeyMediaNext:
+          SendMediaCommandToFlutter("next");
+          return TRUE;
+        case kHotkeyMediaPrevious:
+          SendMediaCommandToFlutter("previous");
+          return TRUE;
+      }
+      break;
+    }
     case WM_APPCOMMAND: {
       const int command = GET_APPCOMMAND_LPARAM(lparam);
       switch (command) {
